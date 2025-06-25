@@ -81,3 +81,89 @@ class FeedForwardBlock(nn.Module):
         # x is of shape (batch_size, seq_len, d_model) ->  Linear 1 -> (batch_size, seq_len, d_ff)
         # -> ReLU -> (batch_size, seq_len, d_ff) -> Dropout
         return self.linear2(self.dropout(self.relu(self.linear1(x))))
+
+
+class MultiHeadAttentionBlock(nn.Module):
+    def __init__(self, d_model: int = 512, n_heads: int = 8, dropout: float = 0.1):
+        super(MultiHeadAttentionBlock, self).__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_k = d_model // n_heads  # dimension of each head
+
+        assert (
+            self.d_k * self.n_heads == self.d_model
+        ), "d_model must be divisible by n_heads"
+        # W_k: Key (seq_length, d_model) -> W_k (d_model, d_model) -> (seq_length, d_model)
+        self.w_k = nn.Linear(d_model, d_model)
+
+        # W_q: Query (seq_length, d_model) -> W_q (d_model, d_model) -> (seq_length, d_model)
+        self.w_q = nn.Linear(d_model, d_model)
+
+        # W_v: Value (seq_length, d_model) -> W_v (d_model, d_model) -> (seq_length, d_model)
+        self.w_v = nn.Linear(d_model, d_model)
+
+        # W_o: Output (seq_length, h * d_v) -> W_o (h * d_v, d_model) -> (seq_length, d_model) where h * d_v = d_model
+        self.w_o = nn.Linear(d_model, d_model)
+
+        self.dropout = nn.Dropout(dropout)  # dropout layer
+
+    @staticmethod
+    def attention(query, key, value, dropout: nn.Dropout = None, mask=None):
+        # query, key, value are of shape (batch_size, n_heads, seq_len, d_k)
+        d_k = query.size(-1)  # dimension of the key/query
+
+        # (batch_size, n_heads, seq_len, d_k) matmul (batch_size, n_heads, d_k, seq_len) -> (batch_size, n_heads, seq_len, seq_len)
+        attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
+        if mask is not None:
+            # mask is of shape (batch_size, 1, seq_len, seq_len)
+            attention_scores = attention_scores.masked_fill(mask == 0, -1e9)
+
+        # softmax over the last dimension
+        # (batch_size, n_heads, seq_len, seq_len)
+        attention_probs = torch.softmax(attention_scores, dim=-1)
+
+        if dropout is not None:
+            attention_probs = dropout(attention_probs)  # apply dropout
+
+        # (batch_size, n_heads, seq_len, d_k), attention_probs
+        return (attention_scores @ value), attention_probs
+
+    def forward(self, q, k, v, mask=None):
+
+        # (batch_size, seq_len, d_model) -> (batch_size, seq_len, d_model)
+        query = self.w_q(q)
+        key = self.w_k(k)
+        value = self.w_v(v)
+
+        # divide by the number of heads (split by embedding not sentence into h heads)
+        # (batch_size, seq_len, d_model) -> (batch_size, n_heads, seq_len, d_k) -> transpose -> (batch_size, n_heads, seq_len, d_k)
+        # intuition: each head will see whole sequence, but with smaller part of the embedding
+        query = query.view(
+            query.size(0), query.size(1), self.n_heads, self.d_k
+        ).transpose(1, 2)
+
+        key = key.view(key.size(0), key.size(1), self.n_heads, self.d_k).transpose(1, 2)
+
+        value = value.view(
+            value.size(0), value.size(1), self.n_heads, self.d_k
+        ).transpose(1, 2)
+
+        x, self.attention_scores = self.attention(query, key, value, self.dropout, mask)
+
+        # (batch_size, n_heads, seq_len, d_k) -> transpose (batch_size, seq_len, n_heads, d_k) -> (batch_size, seq_len, n_heads * d_k) where n_heads * d_k = d_model
+        x = x.transpose(1, 2).contiguous().view(x.size(0), -1, self.d_model)
+
+        # (batch_size, seq_len, d_model) -> (batch_size, seq_len, d_model)
+        return self.w_o(x)
+
+
+class ResidualConnection(nn.Module):
+    def __init__(self, dropout: float = 0.1):
+        super(ResidualConnection, self).__init__()
+        self.dropout = nn.Dropout(dropout)
+        self.layer_norm = LayerNorm()
+
+    def forward(self, x, sublayer):
+        # x is of shape (batch_size, seq_len, d_model)
+        # sublayer is a previous layer (e.g. MultiHeadAttentionBlock or FeedForwardBlock)
+        return x + self.dropout(sublayer(self.layer_norm(x)))
