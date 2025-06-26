@@ -233,3 +233,23 @@ class DecoderBlock(nn.Module):
                 ResidualConnection(dropout),
             ]
         )
+
+    def forward(self, x, encoder_output, src_mask=None, target_mask=None):
+        # src_mask needed for masking the padding tokens in the input sequence
+        # target_mask needed for masking the future tokens in the target sequence
+
+        x = self.residual_connections[0](
+            x, lambda x: self.self_attention_block(x, x, x, target_mask)
+        )
+
+        # x used as key from decoder, encoder_output used as value and query from encoder
+        x = self.residual_connections[1](
+            x,
+            lambda x: self.cross_attention_block(
+                x, encoder_output, encoder_output, src_mask
+            ),
+        )
+
+        x = self.residual_connections[2](x, self.feed_forward_block)
+
+        return x
