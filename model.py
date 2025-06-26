@@ -253,3 +253,135 @@ class DecoderBlock(nn.Module):
         x = self.residual_connections[2](x, self.feed_forward_block)
 
         return x
+
+
+class Decoder(nn.Module):
+    def __init__(self, layers: nn.ModuleList):
+        super(Decoder, self).__init__()
+        self.layers = layers
+        self.norm = LayerNorm()
+
+    def forward(self, x, encoder_output, src_mask=None, target_mask=None):
+        # x is of shape (batch_size, seq_len, d_model)
+        for layer in self.layers:
+            x = layer(x, encoder_output, src_mask, target_mask)
+
+        return self.norm(x)  # (batch_size, seq_len, d_model)
+
+
+class LinearLayer(nn.Module):
+    def __init__(self, d_model: int = 512, vocab_size: int = 20000):
+        super(LinearLayer, self).__init__()
+        self.linear = nn.Linear(d_model, vocab_size)
+
+    def forward(self, x):
+        # (batch_size, seq_len, d_model) -> (batch_size, seq_len, vocab_size)
+        return torch.log_softmax(
+            self.linear(x), dim=-1
+        )  # (batch_size, seq_len, vocab_size)
+
+
+class Transformer(nn.Module):
+    def __init__(
+        self,
+        encoder: Encoder,
+        decoder: Decoder,
+        src_embedding: InputEmbedding,
+        tgt_embedding: InputEmbedding,
+        src_pos: PositionalEncoding,
+        tgt_pos: PositionalEncoding,
+        linear_layer: LinearLayer,
+    ):
+        super(Transformer, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.src_embedding = src_embedding
+        self.tgt_embedding = tgt_embedding
+        self.src_pos = src_pos
+        self.tgt_pos = tgt_pos
+        self.linear_layer = linear_layer
+
+    def encode(self, src, src_mask=None):
+        # src is of shape (batch_size, seq_len)
+        src = self.src_embedding(src)
+        src = self.src_pos(src)  # (batch_size, seq_len, d_model)
+        return self.encoder(src, src_mask)  # (batch_size, seq_len, d_model)
+
+    def decode(self, encoder_output, src_mask, tgt, tgt_mask):
+        tgt = self.src_embedding(tgt)
+        tgt = self.src_pos(tgt)  # (batch_size, seq_len, d_model)
+
+        return self.decoder(
+            tgt, encoder_output, src_mask, tgt_mask
+        )  # (batch_size, seq_len, d_model)
+
+    def linear(self, x):
+        return self.linear_layer(x)
+
+
+def build_transformer(
+    src_vocab: int,
+    tgt_vocab: int,
+    src_seq_len: int,
+    tgt_seq_len: int,
+    d_model: int = 512,  # dimension of the model
+    N: int = 6,  # number of encoder/decoder blocks
+    h: int = 8,  # number of heads in multi-head attention
+    dropout=0.1,
+    d_ff: int = 2048,  # dimension of the feed-forward network
+) -> Transformer:
+    # Create embedding layers
+    src_embedding = InputEmbedding(src_vocab, d_model)
+    tgt_embedding = InputEmbedding(tgt_vocab, d_model)
+
+    # Create positional encoding layers
+    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
+    tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout)
+
+    # Create encoder blocks
+    encoder_layers = nn.ModuleList(
+        [
+            EncoderBlock(
+                MultiHeadAttentionBlock(d_model, h, dropout),
+                FeedForwardBlock(d_model, d_ff, dropout),
+                dropout,
+            )
+            for _ in range(N)
+        ]
+    )
+
+    # Create decoder blocks
+    decoder_layers = nn.ModuleList(
+        [
+            DecoderBlock(
+                MultiHeadAttentionBlock(d_model, h, dropout),
+                MultiHeadAttentionBlock(d_model, h, dropout),
+                FeedForwardBlock(d_model, d_ff, dropout),
+                dropout,
+            )
+            for _ in range(N)
+        ]
+    )
+
+    encoder = Encoder(encoder_layers)
+    decoder = Decoder(decoder_layers)
+
+    # Create linear layer
+    linear_layer = LinearLayer(d_model, tgt_vocab)
+
+    transformer = Transformer(
+        encoder,
+        decoder,
+        src_embedding,
+        tgt_embedding,
+        src_pos,
+        tgt_pos,
+        linear_layer,
+    )
+
+    # Initialize weights
+    for p in transformer.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+
+    return transformer
