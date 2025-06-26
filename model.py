@@ -148,7 +148,9 @@ class MultiHeadAttentionBlock(nn.Module):
             value.size(0), value.size(1), self.n_heads, self.d_k
         ).transpose(1, 2)
 
-        x, self.attention_scores = self.attention(query, key, value, self.dropout, mask)
+        x, self.attention_scores = MultiHeadAttentionBlock.attention(
+            query, key, value, self.dropout, mask
+        )
 
         # (batch_size, n_heads, seq_len, d_k) -> transpose (batch_size, seq_len, n_heads, d_k) -> (batch_size, seq_len, n_heads * d_k) where n_heads * d_k = d_model
         x = x.transpose(1, 2).contiguous().view(x.size(0), -1, self.d_model)
@@ -167,3 +169,67 @@ class ResidualConnection(nn.Module):
         # x is of shape (batch_size, seq_len, d_model)
         # sublayer is a previous layer (e.g. MultiHeadAttentionBlock or FeedForwardBlock)
         return x + self.dropout(sublayer(self.layer_norm(x)))
+
+
+class EncoderBlock(nn.Module):
+    def __init__(
+        self,
+        self_attention_block: MultiHeadAttentionBlock,
+        feed_forward_block: FeedForwardBlock,
+        dropout: float = 0.1,
+    ):
+        super(EncoderBlock, self).__init__()
+        self.self_attention_block = self_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.ModuleList(
+            [ResidualConnection(dropout), ResidualConnection(dropout)]
+        )
+
+    def forward(self, x, src_mask=None):
+        # src_mask needed for masking the padding tokens in the input sequence
+
+        # Apply self-attention block with residual connection
+        # x is of shape (batch_size, seq_len, d_model)
+        x = self.residual_connection[0](
+            x, lambda x: self.self_attention_block(x, x, x, src_mask)
+        )
+
+        # Apply feed-forward block with residual connection
+        x = self.residual_connections[1](x, self.feed_forward_block)
+
+        return x
+
+
+class Encoder(nn.Module):
+    def __init__(self, layers: nn.ModuleList):
+        super(Encoder, self).__init__()
+        self.layers = layers
+        self.norm = LayerNorm()
+
+    def forward(self, x, src_mask=None):
+        # x is of shape (batch_size, seq_len, d_model)
+        for layer in self.layers:
+            x = layer(x, src_mask)
+
+        return self.norm(x)  # (batch_size, seq_len, d_model)
+
+
+class DecoderBlock(nn.Module):
+    def __init__(
+        self,
+        self_attention_block: MultiHeadAttentionBlock,
+        cross_attention_block: MultiHeadAttentionBlock,
+        feed_forward_block: FeedForwardBlock,
+        dropout: float = 0.1,
+    ):
+        super(DecoderBlock, self).__init__()
+        self.self_attention_block = self_attention_block
+        self.cross_attention_block = cross_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.ModuleList(
+            [
+                ResidualConnection(dropout),
+                ResidualConnection(dropout),
+                ResidualConnection(dropout),
+            ]
+        )
