@@ -49,12 +49,12 @@ def build_tokenzier(config: Dict, dataset, language: str):
     return tokenizer
 
 
-def load_dataset_and_tokenizer(config: Dict, language: str):
+def load_dataset_and_tokenizer(config: Dict):
     """
     Load the dataset and tokenizer for the specified language.
     """
 
-    def calcualate_max_seq_len(dataset, tokenizer):
+    def calcualate_max_seq_len(dataset, tokenizer, language: str) -> int:
         return max(
             len(tokenizer.encode(item["translation"][language]).ids) for item in dataset
         )
@@ -92,10 +92,10 @@ def load_dataset_and_tokenizer(config: Dict, language: str):
     )
 
     print(
-        f"Max sequence length for {config['language_src']}: {calcualate_max_seq_len(train_set_raw, tokenizer_src)}"
+        f"Max sequence length for {config['language_src']}: {calcualate_max_seq_len(train_set_raw, tokenizer_src, config['language_src'])}"
     )
     print(
-        f"Max sequence length for {config['language_tgt']}: {calcualate_max_seq_len(train_set_raw, tokenizer_tgt)}"
+        f"Max sequence length for {config['language_tgt']}: {calcualate_max_seq_len(train_set_raw, tokenizer_tgt, config['language_tgt'])}"
     )
 
     train_dataloader = DataLoader(
