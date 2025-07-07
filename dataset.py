@@ -4,7 +4,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from typing import Dict, Any
 
 
-def causual_mask(seq_len: int) -> torch.Tensor:
+def causal_mask(seq_len: int) -> torch.Tensor:
     """
     Create a causal mask for the given sequence length.
     The mask is used to prevent attending to future tokens in the sequence.
@@ -23,7 +23,7 @@ class BilingualDataset(Dataset):
         tgt_tokenizer,
         seq_len: int,
     ):
-        super.__init__()
+        super(Dataset, self).__init__()
         self.dataset = dataset
         self.src_language = src_language
         self.tgt_language = tgt_language
@@ -31,13 +31,13 @@ class BilingualDataset(Dataset):
         self.tgt_tokenizer = tgt_tokenizer
         self.seq_len = seq_len
 
-        self.sos_token = torch.Tensor(
+        self.sos_token = torch.tensor(
             [src_tokenizer.token_to_id("[SOS]")], dtype=torch.int64
         )
-        self.eos_token = torch.Tensor(
+        self.eos_token = torch.tensor(
             [src_tokenizer.token_to_id("[EOS]")], dtype=torch.int64
         )
-        self.pad_token = torch.Tensor(
+        self.pad_token = torch.tensor(
             [src_tokenizer.token_to_id("[PAD]")], dtype=torch.int64
         )
 
@@ -60,7 +60,7 @@ class BilingualDataset(Dataset):
 
         # Add SOS and EOS tokens to the encoder input
         # and pad the sequence to the required length
-        encoder_input_tokens = torch.cat(
+        encoder_input = torch.cat(
             [
                 self.sos_token,
                 torch.tensor(encoder_input_tokens, dtype=torch.int64),
@@ -73,7 +73,7 @@ class BilingualDataset(Dataset):
 
         # Add SOS token to the decoder input
         # and pad the sequence to the required length
-        encoder_input_tokens = torch.cat(
+        decoder_input = torch.cat(
             [
                 self.sos_token,
                 torch.tensor(decoder_input_tokens, dtype=torch.int64),
@@ -96,25 +96,21 @@ class BilingualDataset(Dataset):
             ]
         )
 
-        assert (
-            len(encoder_input_tokens) == self.seq_len
-        ), "Encoder input length mismatch."
-        assert (
-            len(decoder_input_tokens) == self.seq_len
-        ), "Decoder input length mismatch."
-        assert len(label) == self.seq_len, "Label length mismatch."
+        assert encoder_input.size(0) == self.seq_len, "Encoder input length mismatch."
+        assert decoder_input.size(0) == self.seq_len, "Decoder input length mismatch."
+        assert label.size(0) == self.seq_len, "Label length mismatch."
 
-        encoder_mask = encoder_input_tokens != self.pad_token
-        encoder_mask = encoder_input_tokens.unsqueeze(0).unsqueeze(0).int()
+        encoder_mask = encoder_input != self.pad_token
+        encoder_mask = encoder_mask.unsqueeze(0).unsqueeze(0).int()
 
-        decoder_mask = decoder_input_tokens != self.pad_token
-        decoder_mask = decoder_mask.unsqueeze(0).unsqueeze(0).int() & causual_mask(
-            len(decoder_input_tokens)
+        decoder_mask = decoder_input != self.pad_token
+        decoder_mask = decoder_mask.unsqueeze(0).unsqueeze(0).int() & causal_mask(
+            len(decoder_input)
         )
 
         return {
-            "encoder_input": encoder_input_tokens,  # (seq_len)
-            "decoder_input": decoder_input_tokens,  # (seq_len)
+            "encoder_input": encoder_input,  # (seq_len)
+            "decoder_input": decoder_input,  # (seq_len)
             "encoder_mask": encoder_mask,  # (1 - batch, 1 - d_model, seq_len)
             "decoder_mask": decoder_mask,  # (1 - batch, 1 - d_model, seq_len)
             "label": label,  # (seq_len)

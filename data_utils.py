@@ -1,17 +1,17 @@
 import torch
 import torch.nn as nn
-from torch.utils import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split
 
 from datasets import load_dataset
 from tokenizers import Tokenizer
-from tokenizer.models import WordLevel
-from tokenizer.trainers import WordLevelTrainer
-from tokenizer.pre_tokenizers import Whitespace
+from tokenizers.models import WordLevel
+from tokenizers.trainers import WordLevelTrainer
+from tokenizers.pre_tokenizers import Whitespace
 
 from typing import Dict, Any
 from pathlib import Path
 
-from dataset import BilingualDataset, causual_mask
+from dataset import BilingualDataset, causal_mask
 
 HG_DATASET_NAME = "Helsinki-NLP/opus_books"
 
@@ -33,9 +33,8 @@ def build_tokenzier(config: Dict, dataset, language: str):
         tokenizer.pre_tokenizer = Whitespace()
 
         trainer = WordLevelTrainer(
-            vocab_size=config["vocab_size"],
-            special_tokens=["[UNK]", "[PAD]}", "[SOS]", "[EOS]"],
-            min_frequency=config["min_frequency"],
+            special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]"],
+            min_frequency=2,
         )
 
         tokenizer.train_from_iterator(
@@ -73,7 +72,7 @@ def load_dataset_and_tokenizer(config: Dict):
     val_size = len(dataset) - train_size
     train_set_raw, val_set_raw = random_split(dataset, (train_size, val_size))
 
-    trains_set = BilingualDataset(
+    train_set = BilingualDataset(
         train_set_raw,
         config["language_src"],
         config["language_tgt"],
@@ -99,7 +98,7 @@ def load_dataset_and_tokenizer(config: Dict):
     )
 
     train_dataloader = DataLoader(
-        trains_set,
+        train_set,
         batch_size=config["batch_size"],
         shuffle=True,
     )

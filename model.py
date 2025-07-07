@@ -11,7 +11,7 @@ class InputEmbedding(nn.Module):
         self.embedding = nn.Embedding(vocab_size, d_model)
 
     def forward(self, x):
-        return self.embedding(x) * math.srt(self.d_model)
+        return self.embedding(x) * math.sqrt(self.d_model)
 
 
 class PositionalEncoding(nn.Module):
@@ -55,16 +55,16 @@ class LayerNorm(nn.Module):
     def __init__(self, eps: float = 1e-6):
         super(LayerNorm, self).__init__()
         self.eps = eps  # small value to avoid division by zero
-        self.aplha = nn.Parameter(
+        self.alpha = nn.Parameter(
             torch.ones(1)
         )  # learnable scale parameter, multiplication
         self.beta = nn.Parameter(torch.zeros(1))  # learnable shift parameter, addition
 
     def forward(self, x):
         # x is of shape (batch_size, seq_len, d_model)
-        mean = nn.mean(x, dim=-1, keepdim=True)  # mean across the last dimension
-        std = nn.std(
-            x, dim=-1, keepdim=True
+        mean = x.mean(dim=-1, keepdim=True)  # mean across the last dimension
+        std = x.std(
+            dim=-1, keepdim=True
         )  # standard deviation across the last dimension
         return self.alpha * (x - mean) / (std + self.eps) + self.beta
 
@@ -75,12 +75,11 @@ class FeedForwardBlock(nn.Module):
         self.linear1 = nn.Linear(d_model, d_ff)  # first linear layer
         self.linear2 = nn.Linear(d_ff, d_model)  # second linear layer
         self.dropout = nn.Dropout(dropout)  # dropout layer
-        self.relu = torch.relu()
 
     def forward(self, x):
         # x is of shape (batch_size, seq_len, d_model) ->  Linear 1 -> (batch_size, seq_len, d_ff)
         # -> ReLU -> (batch_size, seq_len, d_ff) -> Dropout
-        return self.linear2(self.dropout(self.relu(self.linear1(x))))
+        return self.linear2(self.dropout(torch.relu(self.linear1(x))))
 
 
 class MultiHeadAttentionBlock(nn.Module):
@@ -190,7 +189,7 @@ class EncoderBlock(nn.Module):
 
         # Apply self-attention block with residual connection
         # x is of shape (batch_size, seq_len, d_model)
-        x = self.residual_connection[0](
+        x = self.residual_connections[0](
             x, lambda x: self.self_attention_block(x, x, x, src_mask)
         )
 
@@ -308,8 +307,8 @@ class Transformer(nn.Module):
         return self.encoder(src, src_mask)  # (batch_size, seq_len, d_model)
 
     def decode(self, encoder_output, src_mask, tgt, tgt_mask):
-        tgt = self.src_embedding(tgt)
-        tgt = self.src_pos(tgt)  # (batch_size, seq_len, d_model)
+        tgt = self.tgt_embedding(tgt)
+        tgt = self.tgt_pos(tgt)  # (batch_size, seq_len, d_model)
 
         return self.decoder(
             tgt, encoder_output, src_mask, tgt_mask
