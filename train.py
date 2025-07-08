@@ -8,7 +8,9 @@ from config import get_config, get_weights_path
 from data_utils import load_dataset_and_tokenizer
 from model import build_transformer
 from dataset import BilingualDataset, causal_mask
+from utils import configure_reproducibility
 import torchmetrics
+from torchmetrics.text import BLEUScore
 
 
 def greedy_decode(
@@ -58,6 +60,42 @@ def greedy_decode(
     return decoder_input.squeeze(0)
 
 
+def calculate_validation_loss(model, val_dataset, tokenizer_tgt, device):
+    """Calculate validation loss over the entire validation set."""
+    model.eval()
+    total_loss = 0
+    total_tokens = 0
+    
+    loss_fn = torch.nn.CrossEntropyLoss(
+        ignore_index=tokenizer_tgt.token_to_id("[PAD]"),
+        reduction='sum'
+    )
+    
+    with torch.no_grad():
+        for batch in val_dataset:
+            encoder_input = batch["encoder_input"].to(device)
+            decoder_input = batch["decoder_input"].to(device)
+            encoder_mask = batch["encoder_mask"].to(device)
+            decoder_mask = batch["decoder_mask"].to(device)
+            label = batch["label"].to(device)
+            
+            encoder_output = model.encode(encoder_input, encoder_mask)
+            decoder_output = model.decode(encoder_output, encoder_mask, decoder_input, decoder_mask)
+            linear_output = model.linear(decoder_output)
+            
+            loss = loss_fn(linear_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+            
+            # Count non-padding tokens
+            non_pad_tokens = (label != tokenizer_tgt.token_to_id("[PAD]")).sum().item()
+            
+            total_loss += loss.item()
+            total_tokens += non_pad_tokens
+    
+    avg_loss = total_loss / total_tokens if total_tokens > 0 else 0
+    perplexity = torch.exp(torch.tensor(avg_loss))
+    return avg_loss, perplexity.item()
+
+
 def run_validation(
     model,
     val_dataset,
@@ -71,22 +109,23 @@ def run_validation(
     num_examples=2,
 ):
     model.eval()
-    count = 0
-
-    source_sentences = []
-    target_sentences = []
-    predicted_sentences = []
-
+    
+    # Full validation set evaluation
+    all_source_sentences = []
+    all_target_sentences = []
+    all_predicted_sentences = []
+    
     console_width = 80
-
+    
+    print_message(f"Running full validation set evaluation...")
+    
     with torch.no_grad():
-        for batch in val_dataset:
-            count += 1
-            encoder_input = batch["encoder_input"].to(device)  # (batch=1, seq_len)
+        for batch in tqdm(val_dataset, desc="Validating", leave=False):
+            encoder_input = batch["encoder_input"].to(device)
             encoder_mask = batch["encoder_mask"].to(device)
-
+            
             assert encoder_input.size(0) == 1, "Batch size must be 1 for validation."
-
+            
             model_output = greedy_decode(
                 model,
                 encoder_input,
@@ -96,40 +135,72 @@ def run_validation(
                 max_len=max_len,
                 device=device,
             )
-
-            source_sentences.append(batch["src_text"][0])
-            target_sentences.append(batch["tgt_text"][0])
-            predicted_sentences.append(
+            
+            all_source_sentences.append(batch["src_text"][0])
+            all_target_sentences.append(batch["tgt_text"][0])
+            all_predicted_sentences.append(
                 tokenizer_tgt.decode(model_output.detach().cpu().numpy())
             )
-
-            print_message(f"-" * console_width)
-            print_message(f"SOURCE: {source_sentences[-1]}")
-            print_message(f"TARGET: {target_sentences[-1]}")
-            print_message(f"PREDICTED: {predicted_sentences[-1]}")
-
-            if count == num_examples:
-                break
-
+    
+    # Calculate validation loss and perplexity
+    val_loss, val_perplexity = calculate_validation_loss(model, val_dataset, tokenizer_tgt, device)
+    
+    # Show a few examples
+    print_message(f"\nValidation Examples:")
+    print_message(f"-" * console_width)
+    for i in range(min(num_examples, len(all_predicted_sentences))):
+        print_message(f"SOURCE: {all_source_sentences[i]}")
+        print_message(f"TARGET: {all_target_sentences[i]}")
+        print_message(f"PREDICTED: {all_predicted_sentences[i]}")
+        print_message(f"-" * console_width)
+    
     if writer:
-        # Evaluate the character error rate
-        # Compute the char error rate
-        metric = torchmetrics.CharErrorRate()
-        cer = metric(predicted_sentences, target_sentences)
-        writer.add_scalar("validation cer", cer, global_step)
+        # Validation loss and perplexity
+        writer.add_scalar("validation/loss", val_loss, global_step)
+        writer.add_scalar("validation/perplexity", val_perplexity, global_step)
+        
+        # Character Error Rate
+        cer_metric = torchmetrics.CharErrorRate()
+        cer = cer_metric(all_predicted_sentences, all_target_sentences)
+        writer.add_scalar("validation/cer", cer, global_step)
+        
+        # Word Error Rate
+        wer_metric = torchmetrics.WordErrorRate()
+        wer = wer_metric(all_predicted_sentences, all_target_sentences)
+        writer.add_scalar("validation/wer", wer, global_step)
+        
+        # BLEU Score
+        bleu_metric = BLEUScore()
+        bleu = bleu_metric(all_predicted_sentences, all_target_sentences)
+        writer.add_scalar("validation/bleu", bleu, global_step)
+        
+        
+        # Length statistics
+        avg_src_len = sum(len(s.split()) for s in all_source_sentences) / len(all_source_sentences)
+        avg_tgt_len = sum(len(s.split()) for s in all_target_sentences) / len(all_target_sentences)
+        avg_pred_len = sum(len(s.split()) for s in all_predicted_sentences) / len(all_predicted_sentences)
+        
+        writer.add_scalar("validation/avg_source_length", avg_src_len, global_step)
+        writer.add_scalar("validation/avg_target_length", avg_tgt_len, global_step)
+        writer.add_scalar("validation/avg_prediction_length", avg_pred_len, global_step)
+        
+        # Dataset size
+        writer.add_scalar("validation/dataset_size", len(all_predicted_sentences), global_step)
+        
         writer.flush()
-
-        # Compute the word error rate
-        metric = torchmetrics.WordErrorRate()
-        wer = metric(predicted_sentences, target_sentences)
-        writer.add_scalar("validation wer", wer, global_step)
-        writer.flush()
-
-        # Compute the BLEU metric
-        metric = torchmetrics.BLEUScore()
-        bleu = metric(predicted_sentences, target_sentences)
-        writer.add_scalar("validation BLEU", bleu, global_step)
-        writer.flush()
+        
+        # Print validation summary
+        print_message(f"\nValidation Results (Step {global_step}):")
+        print_message(f"  Dataset size: {len(all_predicted_sentences)}")
+        print_message(f"  Validation Loss: {val_loss:.4f}")
+        print_message(f"  Perplexity: {val_perplexity:.4f}")
+        print_message(f"  BLEU Score: {bleu:.4f}")
+        print_message(f"  Character Error Rate: {cer:.4f}")
+        print_message(f"  Word Error Rate: {wer:.4f}")
+        print_message(f"  Avg Source Length: {avg_src_len:.1f}")
+        print_message(f"  Avg Target Length: {avg_tgt_len:.1f}")
+        print_message(f"  Avg Prediction Length: {avg_pred_len:.1f}")
+        print_message(f"-" * console_width)
 
 
 def get_model(config, vocab_src_size, vocab_tgt_size):
@@ -148,13 +219,16 @@ def get_model(config, vocab_src_size, vocab_tgt_size):
 
 
 def train_model(config):
+    # Configure reproducibility
+    configure_reproducibility(config)
+    
     # Define device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     Path(config["model_folder"]).mkdir(parents=True, exist_ok=True)
 
-    train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = (
+    train_dataloader, val_dataloader, test_dataloader, tokenizer_src, tokenizer_tgt = (
         load_dataset_and_tokenizer(config)
     )
 
@@ -177,8 +251,9 @@ def train_model(config):
         model_filename = get_weights_path(config, config["preload_weights"])
         print(f"Loading model weights from {model_filename}")
         state = torch.load(model_filename)
+        model.load_state_dict(state["model_state_dict"])
         init_epoch = state["epoch"] + 1
-        optimizer.load_state_dict(state["optimizer"])
+        optimizer.load_state_dict(state["optimizer_state_dict"])
         global_step = state["global_step"]
 
     loss_function = torch.nn.CrossEntropyLoss(
@@ -218,7 +293,8 @@ def train_model(config):
             batch_iterator.set_postfix(loss=loss.item())
 
             # Log in TensorBoard
-            writer.add_scalar("Train loss", loss.item(), global_step)
+            writer.add_scalar("train/loss", loss.item(), global_step)
+            writer.add_scalar("train/learning_rate", optimizer.param_groups[0]['lr'], global_step)
 
             # Backpropagation
             loss.backward()

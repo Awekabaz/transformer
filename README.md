@@ -35,7 +35,9 @@ A complete PyTorch implementation of the Transformer architecture for sequence-t
 - **Source**: Helsinki-NLP/opus_books (English-Italian translation)
 - **Split**: 80% training, 10% validation, 10% test
 - **Preprocessing**: Sequences padded/truncated to 350 tokens
-- **Batch Size**: 6 for training, 1 for validation/test
+- **Batch Size**: Varies by GPU memory (see GPU recommendations below), 1 for validation/test
+   - **Why Validation Batch Size = 1**
+      - The `greedy_decode()` function is designed for single sequences
 
 ## Quick Start
 
@@ -56,6 +58,9 @@ python evaluate.py
 
 # Evaluate specific checkpoint
 python evaluate.py --checkpoint weights/transformer_model_04.pt --output evaluation_results
+
+# Limit saved predictions (default: 100 per dataset)
+python evaluate.py --max-predictions 50
 ```
 
 ### Visualization
@@ -78,8 +83,8 @@ tensorboard --logdir runs/transformer
 ### Default Hyperparameters
 ```python
 {
-    "batch_size": 6,
-    "num_epochs": 10,
+    "batch_size": 12,  # Adjust based on GPU memory
+    "num_epochs": 3,
     "learning_rate": 1e-4,
     "seq_len": 350,
     "d_model": 512,
@@ -89,6 +94,14 @@ tensorboard --logdir runs/transformer
     "language_tgt": "it"
 }
 ```
+
+### GPU Memory & Batch Size Recommendations
+
+| GPU Model | VRAM | Recommended Batch Size | Notes |
+|-----------|------|----------------------|-------|
+| **RTX 5070** | **12GB** | **16** | **Tested configuration** |
+
+**Note**: RTX 5070 with 12GB VRAM successfully runs with batch size 16. Start with recommended size and adjust based on your specific setup and memory usage.
 
 ### Optimization
 - **Optimizer**: Adam (lr=1e-4, eps=1e-9)
@@ -114,31 +127,13 @@ tensorboard --logdir runs/transformer
 - **`validation/avg_prediction_length`**: Average prediction length
 - **`validation/dataset_size`**: Number of validation samples
 
-### Evaluation Metrics (JSON Export)
-```json
-{
-  "validation": {
-    "bleu": 0.2543,
-    "rouge_l": 0.4821,
-    "cer": 0.3456,
-    "wer": 0.5234,
-    "perplexity": 12.34,
-    "num_samples": 2041,
-    "avg_src_length": 23.4,
-    "avg_tgt_length": 25.1,
-    "avg_pred_length": 24.8
-  },
-  "test": { ... }
-}
-```
-
 ## Evaluation Framework
 
 ### Comprehensive Evaluation
 The evaluation framework provides:
 - **Statistical Significance**: Evaluates entire validation/test sets
 - **Multiple Metrics**: BLEU, ROUGE-L, CER, WER, Perplexity
-- **Prediction Export**: Saves all predictions for analysis
+- **Prediction Export**: Saves predictions for analysis (configurable limit)
 - **Comparative Analysis**: Performance across different datasets
 
 ### Validation During Training
@@ -192,41 +187,14 @@ The evaluation framework provides:
 
 ## Performance Expectations
 
-### Training Progress
-- **Initial Loss**: ~8-10
-- **Converged Loss**: ~2-4
-- **BLEU Score**: 0.15-0.35 (depends on dataset size and training time)
-- **Training Time**: ~2-4 hours per epoch on GPU
-
 ### Validation Schedule
 - **Quick Validation**: Sample examples shown during training
 - **Full Validation**: Complete evaluation after each epoch
 - **Test Evaluation**: Run separately with `evaluate.py`
 
-## Common Issues & Solutions
-
-### Empty Predictions
-Three common bugs to check:
-1. **Attention calculation**: Ensure `attention_probs @ value` not `attention_scores @ value`
-2. **Causal mask**: Use `diagonal=0` not `diagonal=1` in `dataset.py:12`
-3. **Model loading**: Add `model.load_state_dict(state["model_state_dict"])` after loading
 
 ### Memory Issues
-- Reduce batch size in `config.py`
-- Use gradient checkpointing for large models
-- Monitor GPU memory usage during training
-
-### Slow Training
-- Increase batch size if memory allows
-- Use mixed precision training
-- Profile code to identify bottlenecks
-
-## Dependencies
-
-```bash
-pip install torch torchvision torchaudio
-pip install transformers datasets tokenizers
-pip install torchmetrics tensorboard
-pip install matplotlib seaborn pandas numpy
-pip install tqdm pathlib
+- **Reduce batch size** in `config.py` (try reducing by 2-4 at a time)
+- **Monitor GPU memory usage** during training with `nvidia-smi`
+- **Sequence length** try reducing the sequence length
 ```

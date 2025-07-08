@@ -12,6 +12,7 @@ from typing import Dict, Any
 from pathlib import Path
 
 from dataset import BilingualDataset, causal_mask
+from utils import set_seed
 
 HG_DATASET_NAME = "Helsinki-NLP/opus_books"
 
@@ -52,6 +53,9 @@ def load_dataset_and_tokenizer(config: Dict):
     """
     Load the dataset and tokenizer for the specified language.
     """
+    # Set seed for reproducible data splits
+    if 'seed' in config:
+        set_seed(config['seed'])
 
     def calcualate_max_seq_len(dataset, tokenizer, language: str) -> int:
         return max(
@@ -69,8 +73,12 @@ def load_dataset_and_tokenizer(config: Dict):
     tokenizer_tgt = build_tokenzier(config, dataset, config["language_tgt"])
 
     train_size = int(config["train_size"] * len(dataset))
-    val_size = len(dataset) - train_size
-    train_set_raw, val_set_raw = random_split(dataset, (train_size, val_size))
+    val_size = int(config["val_size"] * len(dataset))
+    test_size = len(dataset) - 520  # train_size - val_size
+    train_set_raw, val_set_raw, test_set_raw, _ = random_split(
+        dataset, (500, 20, 20, len(dataset) - 540),
+        generator=torch.Generator().manual_seed(config.get('seed', 42))
+    )
 
     train_set = BilingualDataset(
         train_set_raw,
@@ -83,6 +91,15 @@ def load_dataset_and_tokenizer(config: Dict):
 
     val_set = BilingualDataset(
         val_set_raw,
+        config["language_src"],
+        config["language_tgt"],
+        tokenizer_src,
+        tokenizer_tgt,
+        config["seq_len"],
+    )
+
+    test_set = BilingualDataset(
+        test_set_raw,
         config["language_src"],
         config["language_tgt"],
         tokenizer_src,
@@ -107,5 +124,16 @@ def load_dataset_and_tokenizer(config: Dict):
         batch_size=1,
         shuffle=False,
     )
+    test_dataloader = DataLoader(
+        test_set,
+        batch_size=1,
+        shuffle=False,
+    )
 
-    return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
+    return (
+        train_dataloader,
+        val_dataloader,
+        test_dataloader,
+        tokenizer_src,
+        tokenizer_tgt,
+    )

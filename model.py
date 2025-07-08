@@ -125,7 +125,7 @@ class MultiHeadAttentionBlock(nn.Module):
             attention_probs = dropout(attention_probs)  # apply dropout
 
         # (batch_size, n_heads, seq_len, d_k), attention_probs
-        return (attention_scores @ value), attention_probs
+        return (attention_probs @ value), attention_probs
 
     def forward(self, q, k, v, mask=None):
 

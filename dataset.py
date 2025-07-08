@@ -9,8 +9,8 @@ def causal_mask(seq_len: int) -> torch.Tensor:
     Create a causal mask for the given sequence length.
     The mask is used to prevent attending to future tokens in the sequence.
     """
-    mask = torch.tril(torch.ones(1, seq_len, seq_len), diagonal=1).type(torch.int)
-    return mask
+    mask = torch.triu(torch.ones((1, seq_len, seq_len)), diagonal=1).type(torch.int)
+    return mask == 0
 
 
 class BilingualDataset(Dataset):

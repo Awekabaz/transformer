@@ -4,12 +4,13 @@ from typing import Dict
 
 def get_config() -> Dict:
     config = {
-        "batch_size": 6,
-        "num_epochs": 5,
+        "batch_size": 12,
+        "num_epochs": 3,
         "learning_rate": 10**-4,
         "seq_len": 350,
         "d_model": 512,
-        "train_size": 0.9,
+        "train_size": 0.8,
+        "val_size": 0.1,
         "language_src": "en",
         "language_tgt": "it",
         "model_folder": "weights",
@@ -17,6 +18,7 @@ def get_config() -> Dict:
         "preload_weights": None,
         "tokenizer_path": "tokenizers/tokenizer_{0}.json",
         "experiment_name": "runs/transformer",
+        "seed": 42,  # Random seed for reproducibility
     }
     return config
 
